@@ -123,8 +123,7 @@ def main():
         "--preserve-file",
         metavar="FILE",
         help=(
-            "Text file listing refdes to preserve (one per line, '#' "
-            "starts a comment)."
+            "Text file listing refdes to preserve (one per line, '#' starts a comment)."
         ),
     )
     parser.add_argument(
