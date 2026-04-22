@@ -9,7 +9,7 @@ Parses the XML that JITX exports from a board design and produces a
 report mapping each existing reference designator to a new one derived
 from the component's placement. Optionally rewrites the design's
 `design-info/reference-designators.table` so the new refdes values
-stick.
+stick when you re-open the design in JITX.
 
 Renumbering rules:
 
@@ -51,7 +51,8 @@ For development:
 ```bash
 git clone https://github.com/JITx-Inc/jitx-refdes.git
 cd jitx-refdes
-pip install -e .
+pip install -e ".[dev]"
+pytest
 ```
 
 ## Exporting XML from JITX
@@ -60,6 +61,96 @@ In the JITX IDE, use the export menu to generate an XML file for your
 board design. The resulting file will have a `<PROJECT>` root element
 containing a `<BOARD>` section with component instances and a
 `<SCHEMATIC>` section with part number data.
+
+The exporter writes the XML to `designs/<design>/xml/<design>.xml` (or
+`designs/<design>/altium/<design>.xml` on older exports).
+
+## Quickstart
+
+Given an XML export of a 30 × 20 mm board with six components (five on
+top, one on bottom), the tool produces a report like this:
+
+```console
+$ jitx-refdes designs/my-design/xml/my-design.xml -f txt
+INFO Board extent: X [0.000, 30.000]  Y [0.000, 20.000]  size 30.00x20.00 mm
+
+OLD  NEW   PRE  X COORD  Y COORD  SIDE    PACKAGE  KEEP
+---  ----  ---  -------  -------  ------  -------  ----
+C1   C3    C    15.000   18.000   Top     Pkg0402
+C3   C1    C    5.000    18.000   Top     Pkg0402
+C5   C2    C    5.000    12.000   Top     Pkg0402
+J1   J500  J    15.000   5.000    Bottom  USB-C
+R2   R1    R    15.000   10.000   Top     Pkg0402
+U1   U1    U    25.000   15.000   Top     QFN32
+```
+
+Reading the report:
+
+- `C3` and `C5` share the leftmost column (X ≈ 5 mm); `C3` is higher
+  (Y = 18) so it gets `C1`, `C5` gets `C2`.
+- `C1` is in the middle column and becomes `C3`.
+- `R2` is the only `R` so it becomes `R1`.
+- `U1` is the only `U` so it stays `U1`.
+- `J1` is on the Bottom side so its counter starts at 500.
+- The `Board extent` line comes from parsing `BOARD-BOUNDARY` and is
+  emitted at INFO level — useful for spotting off-center boards.
+
+The default output format is CSV; pass `-f txt` for the fixed-width
+layout shown above, or `-f tsv` for tab-separated.
+
+## Workflow
+
+The typical loop when renumbering a real board:
+
+1. **Generate the report** and review the proposed mapping:
+
+   ```bash
+   jitx-refdes designs/my-design/xml/my-design.xml -o refdes_map.csv
+   ```
+
+2. **Identify spec-fixed designators** that must keep their original
+   names — usually a handful of connectors whose refdes is dictated by
+   a spec, mechanical ground points, fiducials, etc. Collect them in a
+   text file:
+
+   ```text
+   # preserved.txt — one refdes per line, '#' starts a comment
+   J1     # USB connector — refdes fixed by host-interface spec
+   J7     # debug header
+   MH1
+   MH2
+   ```
+
+3. **Re-run** with the preserve list and inspect the new report:
+
+   ```bash
+   jitx-refdes designs/my-design/xml/my-design.xml \
+     --preserve-file preserved.txt \
+     -o refdes_map.csv
+   ```
+
+   Preserved rows show `yes` in the `Preserved` column and keep their
+   original `NewRefDes`. Their numbers are reserved so no other
+   component collides with them.
+
+4. **Apply the mapping** by rewriting the design's
+   `reference-designators.table`. This file is JSON that JITX reads
+   when re-opening the design — it maps each component's internal
+   inst-id to a refdes. Rewriting it with new refdes values is what
+   makes the renumbering stick:
+
+   ```bash
+   jitx-refdes designs/my-design/xml/my-design.xml \
+     --preserve-file preserved.txt \
+     --table designs/my-design/design-info/reference-designators.table
+   ```
+
+   By default, in-place updates save a `.bak` copy of the original
+   next to the file. Use `--table-output FILE` to write the updated
+   table elsewhere and leave the original untouched — useful for
+   dry-runs.
+
+5. **Re-open the design in JITX** to pick up the new refdes values.
 
 ## Usage
 
@@ -163,15 +254,16 @@ update_reference_designators_table(
 
 ## How it works
 
-1. Parses `BOARD/INST` elements for placement data (position, side,
+1. Parses `BOARD-BOUNDARY` to compute the board's extent and logs it.
+2. Parses `BOARD/INST` elements for placement data (position, side,
    package name).
-2. Parses `SCHEMATIC/.../SCH-INST/PROPS` for part numbers.
-3. Groups non-preserved components by `(side, prefix)`, splits `U`
+3. Parses `SCHEMATIC/.../SCH-INST/PROPS` for part numbers.
+4. Groups non-preserved components by `(side, prefix)`, splits `U`
    into regular + TOPOLP subgroups, and assigns numbers by position.
-4. Writes the old-to-new mapping in the requested format.
-5. If `--table` is set, reads the JITX `reference-designators.table`
-   (inst-id → refdes), joins through the old refdes to replace each
-   value with its new refdes, and writes the updated table.
+5. Writes the old-to-new mapping in the requested format.
+6. If `--table` is set, reads the JITX `reference-designators.table`
+   (inst-id → refdes JSON), joins through the old refdes to replace
+   each value with its new refdes, and writes the updated table.
 
 ## License
 

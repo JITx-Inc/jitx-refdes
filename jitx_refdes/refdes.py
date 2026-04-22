@@ -148,8 +148,12 @@ def _parse_components(xml_path: Path) -> list[dict]:
     if extent is not None:
         log.info(
             "Board extent: X [%.3f, %.3f]  Y [%.3f, %.3f]  size %.2fx%.2f mm",
-            extent[0], extent[2], extent[1], extent[3],
-            extent[2] - extent[0], extent[3] - extent[1],
+            extent[0],
+            extent[2],
+            extent[1],
+            extent[3],
+            extent[2] - extent[0],
+            extent[3] - extent[1],
         )
 
     # Only first occurrence per designator — multi-unit components may

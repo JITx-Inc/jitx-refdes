@@ -16,11 +16,13 @@ from jitx_refdes import (
 )
 
 
-def _inst(desig: str, x: float, y: float, side: str = "Top", package: str = "Pkg0402") -> str:
+def _inst(
+    desig: str, x: float, y: float, side: str = "Top", package: str = "Pkg0402"
+) -> str:
     return (
         f'  <INST DESIGNATOR="{desig}" PACKAGE="{package}" SIDE="{side}" HEIGHT="0.0">\n'
         f'    <POSE X="{x}" Y="{y}" ANGLE="0.0"/>\n'
-        f'  </INST>'
+        f"  </INST>"
     )
 
 
@@ -29,10 +31,10 @@ def _board(tmp_path: Path, insts: list[str]) -> Path:
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<PROJECT NAME="Test" VERSION="2.0">\n'
-        '  <BOARD>\n'
-        f'{body}\n'
-        '  </BOARD>\n'
-        '</PROJECT>\n'
+        "  <BOARD>\n"
+        f"{body}\n"
+        "  </BOARD>\n"
+        "</PROJECT>\n"
     )
     path = tmp_path / "board.xml"
     path.write_text(xml)
@@ -46,12 +48,15 @@ def _board(tmp_path: Path, insts: list[str]) -> Path:
 
 def test_prefix_groups_numbered_independently(tmp_path):
     """Each refdes prefix gets its own sequence; C and R don't share numbers."""
-    xml = _board(tmp_path, [
-        _inst("C1", 10, 10),
-        _inst("C2", 20, 20),
-        _inst("R1", 30, 30),
-        _inst("R2", 40, 40),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 10, 10),
+            _inst("C2", 20, 20),
+            _inst("R1", 30, 30),
+            _inst("R2", 40, 40),
+        ],
+    )
     m = build_mapping(xml)
     # Both groups start at 1 independently.
     assert sorted(m[k] for k in ("C1", "C2")) == ["C1", "C2"]
@@ -64,12 +69,15 @@ def test_top_left_column_major_default(tmp_path):
     Components are grouped into X-bins (width 1 mm by default) and
     ordered left-to-right; within each column, top-first (Y descending).
     """
-    xml = _board(tmp_path, [
-        _inst("C1", 90, 10),
-        _inst("C2", 10, 90),
-        _inst("C3", 50, 50),
-        _inst("C4", 90, 90),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 90, 10),
+            _inst("C2", 10, 90),
+            _inst("C3", 50, 50),
+            _inst("C4", 90, 90),
+        ],
+    )
     m = build_mapping(xml)
     # Bins: x=10 -> one comp (C2); x=50 -> one (C3);
     # x=90 -> two (C4 top, C1 bottom). Scan order: C2, C3, C4, C1.
@@ -83,12 +91,15 @@ def test_top_right_differs_from_top_left(tmp_path):
     """Column-major default makes top-left and top-right produce
     different orderings on scattered boards (the originally-requested
     behavior)."""
-    xml = _board(tmp_path, [
-        _inst("C1", 90, 10),
-        _inst("C2", 10, 90),
-        _inst("C3", 50, 50),
-        _inst("C4", 90, 90),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 90, 10),
+            _inst("C2", 10, 90),
+            _inst("C3", 50, 50),
+            _inst("C4", 90, 90),
+        ],
+    )
     left = build_mapping(xml, start_corner="top-left")
     right = build_mapping(xml, start_corner="top-right")
     assert left != right
@@ -96,12 +107,15 @@ def test_top_right_differs_from_top_left(tmp_path):
 
 def test_bin_size_groups_near_x_values(tmp_path):
     """Components with X within one bin get Y-ordered within the column."""
-    xml = _board(tmp_path, [
-        _inst("C1", 10.1, 10.0),
-        _inst("C2", 10.4, 90.0),
-        _inst("C3", 10.9, 50.0),
-        _inst("C4", 50.0, 50.0),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 10.1, 10.0),
+            _inst("C2", 10.4, 90.0),
+            _inst("C3", 10.9, 50.0),
+            _inst("C4", 50.0, 50.0),
+        ],
+    )
     m = build_mapping(xml, bin_size=1.0)
     # C1, C2, C3 all in bin 10. Within bin, Y-desc: C2(90), C3(50), C1(10).
     # Then bin 50 -> C4.
@@ -113,11 +127,14 @@ def test_bin_size_groups_near_x_values(tmp_path):
 
 def test_bin_size_zero_disables_binning(tmp_path):
     """With bin_size=0, close X values sort strictly by X; Y only breaks ties."""
-    xml = _board(tmp_path, [
-        _inst("C1", 10.1, 10.0),
-        _inst("C2", 10.4, 90.0),
-        _inst("C3", 10.9, 50.0),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 10.1, 10.0),
+            _inst("C2", 10.4, 90.0),
+            _inst("C3", 10.9, 50.0),
+        ],
+    )
     m = build_mapping(xml, bin_size=0)
     # Strict X order: C1(10.1) < C2(10.4) < C3(10.9)
     assert m["C1"] == "C1"
@@ -127,12 +144,15 @@ def test_bin_size_zero_disables_binning(tmp_path):
 
 def test_start_corner_and_primary_axis(tmp_path):
     """bottom-right + primary-axis=x sorts by (-x, y)."""
-    xml = _board(tmp_path, [
-        _inst("C1", 10, 90),
-        _inst("C2", 90, 90),
-        _inst("C3", 10, 10),
-        _inst("C4", 90, 10),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 10, 90),
+            _inst("C2", 90, 90),
+            _inst("C3", 10, 10),
+            _inst("C4", 90, 10),
+        ],
+    )
     m = build_mapping(xml, start_corner="bottom-right", primary_axis="x")
     # Sort keys: C1(-10,90), C2(-90,90), C3(-10,10), C4(-90,10)
     # Ascending: C4(-90,10), C2(-90,90), C3(-10,10), C1(-10,90)
@@ -159,12 +179,15 @@ def test_invalid_options_raise(tmp_path):
 
 def test_top_bottom_default_starts(tmp_path):
     """Top defaults to 1, bottom defaults to 500."""
-    xml = _board(tmp_path, [
-        _inst("C1", 10, 10, side="Top"),
-        _inst("C2", 20, 20, side="Top"),
-        _inst("C3", 10, 10, side="Bottom"),
-        _inst("C4", 20, 20, side="Bottom"),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 10, 10, side="Top"),
+            _inst("C2", 20, 20, side="Top"),
+            _inst("C3", 10, 10, side="Bottom"),
+            _inst("C4", 20, 20, side="Bottom"),
+        ],
+    )
     m = build_mapping(xml)
     # Column-major default: bin x=10 first, then x=20.
     # Top:    C1(x=10) -> C1, C2(x=20) -> C2
@@ -176,10 +199,13 @@ def test_top_bottom_default_starts(tmp_path):
 
 
 def test_custom_top_and_bottom_starts(tmp_path):
-    xml = _board(tmp_path, [
-        _inst("C1", 10, 10, side="Top"),
-        _inst("C2", 10, 10, side="Bottom"),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 10, 10, side="Top"),
+            _inst("C2", 10, 10, side="Bottom"),
+        ],
+    )
     m = build_mapping(xml, top_start=100, bottom_start=1000)
     assert m["C1"] == "C100"
     assert m["C2"] == "C1000"
@@ -191,12 +217,15 @@ def test_custom_top_and_bottom_starts(tmp_path):
 
 
 def test_topolp_continues_after_regular_u_top(tmp_path):
-    xml = _board(tmp_path, [
-        _inst("U1", 10, 90, package="QFN32"),
-        _inst("U2", 90, 90, package="QFN32"),
-        _inst("U5", 10, 10, package="TOPOLP"),
-        _inst("U6", 90, 10, package="TOPOLP"),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("U1", 10, 90, package="QFN32"),
+            _inst("U2", 90, 90, package="QFN32"),
+            _inst("U5", 10, 10, package="TOPOLP"),
+            _inst("U6", 90, 10, package="TOPOLP"),
+        ],
+    )
     m = build_mapping(xml)
     # Column-major: bin x=10 first (U1), then x=90 (U2) -> U1, U2
     assert m["U1"] == "U1"
@@ -207,10 +236,13 @@ def test_topolp_continues_after_regular_u_top(tmp_path):
 
 
 def test_topolp_uses_bottom_start(tmp_path):
-    xml = _board(tmp_path, [
-        _inst("U1", 10, 10, side="Bottom", package="QFN32"),
-        _inst("U2", 20, 20, side="Bottom", package="TOPOLP"),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("U1", 10, 10, side="Bottom", package="QFN32"),
+            _inst("U2", 20, 20, side="Bottom", package="TOPOLP"),
+        ],
+    )
     m = build_mapping(xml)
     # Regular U first, then TOPOLP continues
     assert m["U1"] == "U500"
@@ -219,10 +251,13 @@ def test_topolp_uses_bottom_start(tmp_path):
 
 def test_topolp_with_only_via_structures(tmp_path):
     """If there are no regular U's, TOPOLP starts at side_start itself."""
-    xml = _board(tmp_path, [
-        _inst("U1", 10, 10, package="TOPOLP"),
-        _inst("U2", 20, 20, package="TOPOLP"),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("U1", 10, 10, package="TOPOLP"),
+            _inst("U2", 20, 20, package="TOPOLP"),
+        ],
+    )
     m = build_mapping(xml)
     # Column-major: bin x=10 first, then x=20 -> U1, U2
     assert m["U1"] == "U1"
@@ -235,12 +270,15 @@ def test_topolp_with_only_via_structures(tmp_path):
 
 
 def test_preserve_holds_refdes_unchanged(tmp_path):
-    xml = _board(tmp_path, [
-        _inst("C1", 90, 10),
-        _inst("C2", 10, 90),
-        _inst("C3", 50, 50),
-        _inst("C4", 90, 90),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 90, 10),
+            _inst("C2", 10, 90),
+            _inst("C3", 50, 50),
+            _inst("C4", 90, 90),
+        ],
+    )
     m = build_mapping(xml, preserve={"C2"})
     # Column-major natural order: C2, C3, C4, C1 (x=10, 50, 90(top), 90(bot))
     # With C2 preserved (reserves 2):
@@ -263,11 +301,14 @@ def test_preserve_accepts_iterable(tmp_path):
 
 def test_unparseable_refdes_auto_preserved(tmp_path):
     """Refdes without trailing digits can't be renumbered; keep as-is."""
-    xml = _board(tmp_path, [
-        _inst("TP", 10, 10),   # no digits
-        _inst("FID", 20, 20),  # no digits
-        _inst("C1", 30, 30),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("TP", 10, 10),  # no digits
+            _inst("FID", 20, 20),  # no digits
+            _inst("C1", 30, 30),
+        ],
+    )
     m = build_mapping(xml)
     assert m["TP"] == "TP"
     assert m["FID"] == "FID"
@@ -280,11 +321,14 @@ def test_unparseable_refdes_auto_preserved(tmp_path):
 
 
 def test_table_roundtrip_keys_preserved_values_updated(tmp_path):
-    xml = _board(tmp_path, [
-        _inst("C1", 90, 10),
-        _inst("C2", 10, 90),
-        _inst("C3", 50, 50),
-    ])
+    xml = _board(
+        tmp_path,
+        [
+            _inst("C1", 90, 10),
+            _inst("C2", 10, 90),
+            _inst("C3", 50, 50),
+        ],
+    )
     table_data = {
         "assigned": {
             "aaa111": "C1",
@@ -352,11 +396,11 @@ def test_board_extent_from_lines(tmp_path):
     import xml.etree.ElementTree as ET
 
     xml = (
-        '<BOARD>'
+        "<BOARD>"
         '<BOARD-BOUNDARY><LINE WIDTH="0.001">'
         '<POINT X="-15.5" Y="-10.0"/><POINT X="15.5" Y="10.0"/>'
-        '</LINE></BOARD-BOUNDARY>'
-        '</BOARD>'
+        "</LINE></BOARD-BOUNDARY>"
+        "</BOARD>"
     )
     root = ET.fromstring(xml)
     assert _parse_board_extent(root) == (-15.5, -10.0, 15.5, 10.0)
@@ -370,11 +414,11 @@ def test_board_extent_handles_arcs(tmp_path):
     # 90-degree arc from 0 to 90 centered at (0,0), radius 5.
     # Should include tangent at 90 (0, 5) and endpoints.
     xml = (
-        '<BOARD>'
-        '<BOARD-BOUNDARY>'
+        "<BOARD>"
+        "<BOARD-BOUNDARY>"
         '<ARC X="0" Y="0" RADIUS="5" START_ANGLE="0" END_ANGLE="90"/>'
-        '</BOARD-BOUNDARY>'
-        '</BOARD>'
+        "</BOARD-BOUNDARY>"
+        "</BOARD>"
     )
     root = ET.fromstring(xml)
     min_x, min_y, max_x, max_y = _parse_board_extent(root)
@@ -386,7 +430,7 @@ def test_board_extent_absent_returns_none(tmp_path):
     from jitx_refdes.refdes import _parse_board_extent
     import xml.etree.ElementTree as ET
 
-    root = ET.fromstring('<BOARD/>')
+    root = ET.fromstring("<BOARD/>")
     assert _parse_board_extent(root) is None
 
 
