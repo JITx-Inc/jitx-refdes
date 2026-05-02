@@ -7,6 +7,7 @@ import re
 import shutil
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -22,6 +23,12 @@ TOPOLP_PACKAGE = "TOPOLP"
 VIA_STRUCTURE_PREFIX = "U"
 
 SIDES = ("Top", "Bottom")
+
+# JITX exports vary by version: probe these <INST> attribute names in
+# priority order for a stable per-instance identifier that matches the
+# keys in `reference-designators.table`. None means the export does not
+# expose one and the table-update join falls back to old refdes.
+INST_ID_ATTRS = ("INST-ID", "ID", "UID", "INSTANCE-ID")
 
 # Maps starting corner to (y_descending, x_descending). At top-left,
 # Y sorts large-to-small and X sorts small-to-large, so the component
@@ -84,6 +91,14 @@ def _split_refdes(designator: str) -> tuple[str, int] | None:
 
 def _strip_package(package: str) -> str:
     return package.split("$")[0] if package else ""
+
+
+def _read_inst_id(inst: ET.Element) -> str | None:
+    for attr in INST_ID_ATTRS:
+        v = inst.get(attr)
+        if v:
+            return v
+    return None
 
 
 def _parse_board_extent(root: ET.Element) -> tuple[float, float, float, float] | None:
@@ -183,7 +198,6 @@ def _parse_components(xml_path: Path) -> list[dict]:
 
         x = _safe_float(pose.get("X"))
         y = _safe_float(pose.get("Y"))
-        angle = _safe_float(pose.get("ANGLE"))
 
         split = _split_refdes(designator)
         prefix, number = split if split is not None else (None, None)
@@ -191,11 +205,11 @@ def _parse_components(xml_path: Path) -> list[dict]:
         components.append(
             {
                 "RefDes": designator,
+                "InstId": _read_inst_id(inst),
                 "Prefix": prefix,
                 "Number": number,
                 "X": x,
                 "Y": y,
-                "Rotation": angle,
                 "Side": side,
                 "Package": package,
                 "PN": props_map.get(designator, ""),
@@ -465,16 +479,21 @@ def _run_renumbering(
     return components
 
 
-def build_mapping(
+def _build_mappings(
     xml_file: str | Path,
-    start_corner: str = "top-left",
-    primary_axis: str = "x",
-    top_start: int = 1,
-    bottom_start: int = 500,
-    preserve: Iterable[str] | None = None,
-    bin_size: float = 1.0,
-) -> dict[str, str]:
-    """Return a {old_refdes: new_refdes} mapping without writing files."""
+    start_corner: str,
+    primary_axis: str,
+    top_start: int,
+    bottom_start: int,
+    preserve: Iterable[str] | None,
+    bin_size: float,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Renumber and return (refdes_map, inst_id_map).
+
+    `refdes_map` is keyed by the current XML refdes; `inst_id_map` is
+    keyed by the per-instance identifier and only contains components
+    whose XML carried one.
+    """
     xml_path = Path(xml_file)
     if not xml_path.exists():
         raise FileNotFoundError(f"XML file not found: {xml_path}")
@@ -488,7 +507,31 @@ def build_mapping(
         preserve,
         bin_size,
     )
-    return {c["RefDes"]: c["NewRefDes"] for c in components}
+    refdes_map = {c["RefDes"]: c["NewRefDes"] for c in components}
+    inst_id_map = {c["InstId"]: c["NewRefDes"] for c in components if c.get("InstId")}
+    return refdes_map, inst_id_map
+
+
+def build_mapping(
+    xml_file: str | Path,
+    start_corner: str = "top-left",
+    primary_axis: str = "x",
+    top_start: int = 1,
+    bottom_start: int = 500,
+    preserve: Iterable[str] | None = None,
+    bin_size: float = 1.0,
+) -> dict[str, str]:
+    """Return a {old_refdes: new_refdes} mapping without writing files."""
+    refdes_map, _ = _build_mappings(
+        xml_file,
+        start_corner,
+        primary_axis,
+        top_start,
+        bottom_start,
+        preserve,
+        bin_size,
+    )
+    return refdes_map
 
 
 def renumber(
@@ -565,6 +608,20 @@ def renumber(
     return result
 
 
+@dataclass
+class TableUpdateResult:
+    """Result of `update_reference_designators_table`.
+
+    `unmatched` lists table entries whose new refdes could not be
+    determined — neither a stable inst-id match nor a refdes match was
+    found. These entries are left unchanged in the written table; each
+    item is `(inst_id, old_refdes)`.
+    """
+
+    out_path: Path
+    unmatched: list[tuple[str, str]] = field(default_factory=list)
+
+
 def update_reference_designators_table(
     xml_file: str | Path,
     table_file: str | Path,
@@ -575,13 +632,16 @@ def update_reference_designators_table(
     bottom_start: int = 500,
     preserve: Iterable[str] | None = None,
     bin_size: float = 1.0,
-) -> Path:
+) -> TableUpdateResult:
     """Rewrite a JITX reference-designators.table with renumbered refdes.
 
-    The table maps opaque inst-ids to refdes strings. This reads the
-    table, looks up each current refdes in the board mapping derived
-    from the XML, and replaces it with the new refdes. Entries whose
-    current refdes is not present in the XML are left unchanged.
+    The table maps opaque inst-ids to refdes strings. The join prefers a
+    stable inst-id match between the XML and the table — this lets
+    prefix changes (e.g. ``U1`` → ``J1``) reconcile correctly even
+    though the table still holds the old refdes. When the XML does not
+    expose an inst-id, the join falls back to the old refdes (the
+    historical behavior). Entries that match by neither are left
+    unchanged and reported in the result.
 
     Args:
         xml_file: Path to the JITX XML board export.
@@ -593,20 +653,21 @@ def update_reference_designators_table(
             Same meaning as in `renumber`.
 
     Returns:
-        Path of the written file.
+        `TableUpdateResult` with the written path and the list of
+        unmatched table entries (empty when every entry was reconciled).
     """
     table_path = Path(table_file)
     if not table_path.exists():
         raise FileNotFoundError(f"Table file not found: {table_path}")
 
-    mapping = build_mapping(
+    refdes_map, inst_id_map = _build_mappings(
         xml_file,
-        start_corner=start_corner,
-        primary_axis=primary_axis,
-        top_start=top_start,
-        bottom_start=bottom_start,
-        preserve=preserve,
-        bin_size=bin_size,
+        start_corner,
+        primary_axis,
+        top_start,
+        bottom_start,
+        preserve,
+        bin_size,
     )
 
     with table_path.open() as f:
@@ -618,19 +679,24 @@ def update_reference_designators_table(
             f"Table {table_path} has no 'assigned' object at the top level"
         )
 
-    unmatched: list[str] = []
+    unmatched: list[tuple[str, str]] = []
     new_assigned: dict[str, str] = {}
     for inst_id, old_refdes in assigned.items():
-        if old_refdes in mapping:
-            new_assigned[inst_id] = mapping[old_refdes]
-        else:
+        new_refdes = inst_id_map.get(inst_id)
+        if new_refdes is None:
+            new_refdes = refdes_map.get(old_refdes)
+        if new_refdes is None:
             new_assigned[inst_id] = old_refdes
-            unmatched.append(old_refdes)
+            unmatched.append((inst_id, old_refdes))
+        else:
+            new_assigned[inst_id] = new_refdes
 
-    for u in sorted(set(unmatched)):
+    for inst_id, old_refdes in sorted(set(unmatched)):
         log.warning(
-            "Table refdes '%s' not found in XML board export; left unchanged",
-            u,
+            "Table refdes '%s' (inst-id '%s') not present in XML board export "
+            "— likely a prefix change or a removed component; entry left unchanged",
+            old_refdes,
+            inst_id,
         )
 
     data["assigned"] = new_assigned
@@ -644,4 +710,4 @@ def update_reference_designators_table(
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
     out_path.write_text(json.dumps(data, indent=2) + "\n")
-    return out_path
+    return TableUpdateResult(out_path=out_path, unmatched=unmatched)
