@@ -17,10 +17,16 @@ from jitx_refdes import (
 
 
 def _inst(
-    desig: str, x: float, y: float, side: str = "Top", package: str = "Pkg0402"
+    desig: str,
+    x: float,
+    y: float,
+    side: str = "Top",
+    package: str = "Pkg0402",
+    inst_id: str | None = None,
 ) -> str:
+    id_attr = f' INST-ID="{inst_id}"' if inst_id is not None else ""
     return (
-        f'  <INST DESIGNATOR="{desig}" PACKAGE="{package}" SIDE="{side}" HEIGHT="0.0">\n'
+        f'  <INST DESIGNATOR="{desig}" PACKAGE="{package}" SIDE="{side}" HEIGHT="0.0"{id_attr}>\n'
         f'    <POSE X="{x}" Y="{y}" ANGLE="0.0"/>\n'
         f"  </INST>"
     )
@@ -378,6 +384,91 @@ def test_table_without_assigned_key_raises(tmp_path):
     table.write_text(json.dumps({"something_else": {}}))
     with pytest.raises(ValueError, match="assigned"):
         update_reference_designators_table(xml, table, output_file=tmp_path / "out")
+
+
+def test_table_prefix_change_with_inst_id_reconciles(tmp_path):
+    """A prefix change (U1 -> J1) reconciles when XML carries inst-id.
+
+    The table still holds {"abc": "U1"} from the previous run; the
+    XML now exports the same component under DESIGNATOR="J1" but with
+    the same INST-ID. The join through inst-id picks up the new refdes.
+    """
+    xml = _board(
+        tmp_path,
+        [
+            _inst("J1", 10, 10, inst_id="abc"),
+            _inst("R1", 20, 20, inst_id="def"),
+        ],
+    )
+    table = tmp_path / "reference-designators.table"
+    table.write_text(json.dumps({"assigned": {"abc": "U1", "def": "R1"}}, indent=2))
+
+    out = tmp_path / "new.table"
+    result = update_reference_designators_table(xml, table, output_file=out)
+
+    assigned = json.loads(out.read_text())["assigned"]
+    # 'abc' was U1 in the table but the XML now has it as J1 — should
+    # follow the inst-id and pick up "J1".
+    assert assigned["abc"] == "J1"
+    assert assigned["def"] == "R1"
+    assert result.unmatched == []
+
+
+def test_table_prefix_change_without_inst_id_warns_and_keeps_stale(tmp_path, caplog):
+    """Without an inst-id, a prefix change cannot be reconciled.
+
+    The XML's J1 has no inst-id so the join falls back to old refdes
+    "U1", which is not in the new XML mapping. Entry stays stale and
+    a warning naming the prefix-change scenario is emitted.
+    """
+    xml = _board(tmp_path, [_inst("J1", 10, 10)])  # no inst_id
+    table = tmp_path / "reference-designators.table"
+    table.write_text(json.dumps({"assigned": {"abc": "U1"}}, indent=2))
+
+    out = tmp_path / "new.table"
+    with caplog.at_level("WARNING"):
+        result = update_reference_designators_table(xml, table, output_file=out)
+
+    assigned = json.loads(out.read_text())["assigned"]
+    assert assigned["abc"] == "U1"  # left unchanged
+    assert result.unmatched == [("abc", "U1")]
+    assert any(
+        "U1" in r.message and "prefix change" in r.message for r in caplog.records
+    )
+
+
+def test_table_strict_mode_exits_nonzero_on_stale(tmp_path, monkeypatch):
+    """--strict exits non-zero when any entry is unreconciled, but the
+    updated table is still written so the user can inspect it."""
+    import sys
+
+    from jitx_refdes.__main__ import main
+
+    xml = _board(tmp_path, [_inst("J1", 10, 10)])  # no inst_id
+    table = tmp_path / "reference-designators.table"
+    table.write_text(json.dumps({"assigned": {"abc": "U1"}}, indent=2))
+    out = tmp_path / "new.table"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "jitx-refdes",
+            str(xml),
+            "--table",
+            str(table),
+            "--table-output",
+            str(out),
+            "--strict",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    # Table should have been written even though we exited non-zero.
+    assert out.exists()
+    assert json.loads(out.read_text())["assigned"]["abc"] == "U1"
 
 
 # ---------------------------------------------------------------------------

@@ -144,11 +144,23 @@ def main():
             "it here instead of in place. Requires --table."
         ),
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit non-zero if any table entry could not be reconciled "
+            "with the XML (e.g. a refdes whose prefix was changed and "
+            "whose <INST> has no inst-id to match on). The updated table "
+            "is still written so the user can inspect it. Requires --table."
+        ),
+    )
 
     args = parser.parse_args()
 
     if args.table_output and not args.table:
         parser.error("--table-output requires --table")
+    if args.strict and not args.table:
+        parser.error("--strict requires --table")
 
     preserve = _parse_preserve(args.preserve)
     if args.preserve_file:
@@ -170,7 +182,7 @@ def main():
         sys.stdout.write(result)
 
     if args.table:
-        update_reference_designators_table(
+        result = update_reference_designators_table(
             args.xml_file,
             table_file=args.table,
             output_file=args.table_output,
@@ -181,6 +193,13 @@ def main():
             preserve=preserve,
             bin_size=args.bin_size,
         )
+        if args.strict and result.unmatched:
+            sys.stderr.write(
+                f"--strict: {len(result.unmatched)} unreconciled table "
+                f"entr{'y' if len(result.unmatched) == 1 else 'ies'} "
+                f"(see warnings above); table written to {result.out_path}\n"
+            )
+            sys.exit(2)
 
 
 if __name__ == "__main__":
