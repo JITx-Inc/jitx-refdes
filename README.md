@@ -96,7 +96,10 @@ Reading the report:
   emitted at INFO level — useful for spotting off-center boards.
 
 The default output format is CSV; pass `-f txt` for the fixed-width
-layout shown above, or `-f tsv` for tab-separated.
+layout shown above, or `-f tsv` for tab-separated. CSV/TSV use the
+full field names (`OldRefDes`, `NewRefDes`, `Prefix`, `Preserved`);
+the `txt` format abbreviates them to `OLD`, `NEW`, `PRE`, `KEEP` for
+readability.
 
 ## Workflow
 
@@ -149,6 +152,15 @@ The typical loop when renumbering a real board:
    next to the file. Use `--table-output FILE` to write the updated
    table elsewhere and leave the original untouched — useful for
    dry-runs.
+
+   **Refdes prefix changes.** If you renamed a component's prefix in
+   the design (e.g. `U1` → `J1`) the table on disk still holds the
+   old refdes for that inst-id. When the XML export carries a stable
+   `<INST INST-ID="...">` per instance, the join uses inst-id and
+   reconciles the rename automatically. When it does not, those
+   entries cannot be matched and are left unchanged with a WARNING.
+   Pass `--strict` to make the CLI exit non-zero in that case (the
+   updated table is still written so you can inspect it).
 
 5. **Re-open the design in JITX** to pick up the new refdes values.
 
@@ -250,6 +262,7 @@ update_reference_designators_table(
 | `--preserve-file FILE` | Text file of refdes to preserve (one per line) |
 | `--table FILE` | Read & rewrite this `reference-designators.table` |
 | `--table-output FILE` | Write updated table here instead of in place |
+| `--strict` | Exit non-zero if any table entry cannot be reconciled (requires `--table`) |
 | `-h`, `--help` | Show help and exit |
 
 ## How it works
@@ -262,8 +275,13 @@ update_reference_designators_table(
    into regular + TOPOLP subgroups, and assigns numbers by position.
 5. Writes the old-to-new mapping in the requested format.
 6. If `--table` is set, reads the JITX `reference-designators.table`
-   (inst-id → refdes JSON), joins through the old refdes to replace
-   each value with its new refdes, and writes the updated table.
+   (inst-id → refdes JSON) and rewrites each entry's refdes. The join
+   prefers a stable inst-id match between the XML and the table — so
+   prefix changes (e.g. `U1` → `J1`) reconcile correctly when the XML
+   exposes `<INST INST-ID="…">`. When it does not, the join falls back
+   to the old refdes (the historical behavior). Entries that match by
+   neither are left unchanged and a WARNING is logged for each;
+   `--strict` upgrades that to a non-zero exit code.
 
 ## License
 
