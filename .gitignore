@@ -1,0 +1,28 @@
+
+
+# Ignore all hidden files/folders by default
+.*
+
+# Whitelist specific dotfiles/folders
+!.gitignore
+!.vscode/
+
+# Ignore everything in .venv
+.venv/*
+
+.DS_Store
+__pycache__/
+
+# Data Cache - Files that don't need to be version controlled.
+designs/**/cache/
+designs/**/design-info/stable.design.backup*
+designs/**/design-info/physical-layout.design~
+
+# part cache does not need to be stored in Git
+parts-db/
+.venv/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
