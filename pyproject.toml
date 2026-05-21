@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.27.0,<2.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jitx-refdes"
+version = "0.1.0"
+description = "Renumber reference designators by board position from JITX XML board exports"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [
+  { name = "JITX" },
+]
+keywords = ["jitx", "refdes", "reference-designator", "pcb", "electronics", "renumber"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Manufacturing",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+jitx-refdes = "jitx_refdes.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/JITx-Inc/jitx-refdes"
+Repository = "https://github.com/JITx-Inc/jitx-refdes"
+Issues = "https://github.com/JITx-Inc/jitx-refdes/issues"
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  ".vscode/",
+  "3d-models/",
+  "designs/",
+  "parts-db/",
+  ".ruff_cache/",
+  ".gitignore",
+  "tests/",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
